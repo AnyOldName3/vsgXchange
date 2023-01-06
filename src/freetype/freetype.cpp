@@ -653,11 +653,8 @@ vsg::ref_ptr<vsg::Object> freetype::Implementation::read(const vsg::Path& filena
 
     unsigned int average_width = static_cast<unsigned int>(ceil(total_width / double(sortedGlyphQuads.size())));
 
-    auto texel_margin = static_cast<unsigned int>(static_cast<float>(pixel_size) *  vsg::value<float>(0.25f, freetype::texel_margin_ratio, options));
-    auto quad_margin = static_cast<unsigned int>(static_cast<float>(pixel_size) *  vsg::value<float>(0.125f, freetype::quad_margin_ratio, options));
-
-    vsg::info("texel_margin = ", texel_margin);
-    vsg::info("quad_margin = ", quad_margin);
+    auto texel_margin = static_cast<unsigned int>(static_cast<float>(pixel_size) *  vsg::value<float>(0.30f, freetype::texel_margin_ratio, options));
+    auto quad_margin = static_cast<unsigned int>(static_cast<float>(pixel_size) *  vsg::value<float>(0.15f, freetype::quad_margin_ratio, options));
 
     unsigned int provisional_cells_across = static_cast<unsigned int>(ceil(sqrt(double(face->num_glyphs))));
     unsigned int provisional_width = provisional_cells_across * (average_width + texel_margin);
