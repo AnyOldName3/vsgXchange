@@ -47,7 +47,16 @@ In source build:
 
 ### Windows:
 
-To be filled in by a kindly Windows dev :-)
+```powershell
+$env:CMAKE_PREFIX_PATH = "C:\Semicolon\Separated\Paths\To\Where\Dependencies\Are\Installed"
+# Other generators are available
+cmake . -G "Visual Studio 17 2022" -A x64
+# Either build with Ctrl+Shift+B in the Visual Studio GUI or...
+# Other configs are available.
+cmake --build . --config RelWithDebInfo
+# Either build the INSTALL target via the Visual Studio GUI or...
+cmake --install . --config RelWithDebInfo --prefix C:\Path\To\Install\Destination
+```
 
 ## How to use vsgXchange in your own applications
 
