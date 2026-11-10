@@ -211,7 +211,7 @@ vsg::ref_ptr<vsg::Node> Tiles3D::Builder::decorateInstanceChild(vsg::ref_ptr<i3d
     return {};
 }
 
-vsg::ref_ptr<vsg::Node> Tiles3D::Builder::readTileChildren(vsg::ref_ptr<Tiles3D::Tile> tile, uint32_t level, const std::string& inherited_refine)
+vsg::ref_ptr<vsg::Node> Tiles3D::Builder::readTileChildren(vsg::ref_ptr<Tiles3D::Tile> tile, uint32_t level, const std::string& inherited_refine, vsg::ref_ptr<const vsg::Options> tile_options)
 {
     // vsg::info("readTileChildren(", tile, ", ", level, ") ", tile->children.values.size(), ", ", operationThreads);
 
@@ -228,18 +228,20 @@ vsg::ref_ptr<vsg::Node> Tiles3D::Builder::readTileChildren(vsg::ref_ptr<Tiles3D:
             uint32_t level;
             std::string rto_inherited_refine;
             vsg::ref_ptr<vsg::Latch> latch;
+            vsg::ref_ptr<vsg::Options> tile_options;
 
-            ReadTileOperation(Builder* in_builder, vsg::ref_ptr<Tiles3D::Tile> in_tile, vsg::ref_ptr<vsg::Node>& in_subgraph, uint32_t in_level, const std::string& in_inherited_refine, vsg::ref_ptr<vsg::Latch> in_latch) :
+            ReadTileOperation(Builder* in_builder, vsg::ref_ptr<Tiles3D::Tile> in_tile, vsg::ref_ptr<vsg::Node>& in_subgraph, uint32_t in_level, const std::string& in_inherited_refine, vsg::ref_ptr<vsg::Latch> in_latch, vsg::ref_ptr<vsg::Options> in_options) :
                 builder(in_builder),
                 tileToCreate(in_tile),
                 subgraph(in_subgraph),
                 level(in_level),
                 rto_inherited_refine(in_inherited_refine),
-                latch(in_latch) {}
+                latch(in_latch),
+                tile_options(in_options) {}
 
             void run() override
             {
-                subgraph = builder->createTile(tileToCreate, level, rto_inherited_refine);
+                subgraph = builder->createTile(tileToCreate, level, rto_inherited_refine, tile_options);
                 // vsg::info("Tiles3D::Builder::readTileChildren() createTile() ", subgraph);
                 if (latch) latch->count_down();
             }
@@ -251,7 +253,7 @@ vsg::ref_ptr<vsg::Node> Tiles3D::Builder::readTileChildren(vsg::ref_ptr<Tiles3D:
         auto itr = children.begin();
         for (auto child : tile->children.values)
         {
-            operationThreads->add(ReadTileOperation::create(this, child, *itr++, level + 1, refine, latch), vsg::INSERT_FRONT);
+            operationThreads->add(ReadTileOperation::create(this, child, *itr++, level + 1, refine, latch, vsg::clone(tile_options)), vsg::INSERT_FRONT);
         }
 
         // use this thread to read the files as well
@@ -274,7 +276,7 @@ vsg::ref_ptr<vsg::Node> Tiles3D::Builder::readTileChildren(vsg::ref_ptr<Tiles3D:
     {
         for (auto child : tile->children.values)
         {
-            if (auto vsg_child = createTile(child, level + 1, refine))
+            if (auto vsg_child = createTile(child, level + 1, refine, vsg::clone(tile_options)))
             {
                 group->addChild(vsg_child);
             }
@@ -313,7 +315,7 @@ bool Tiles3D::Builder::isTripleNestedTile(vsg::ref_ptr<Tiles3D::Tile> tile) cons
     return false;
 }
 
-vsg::ref_ptr<vsg::Node> Tiles3D::Builder::createTripleNestedTile(vsg::ref_ptr<Tiles3D::Tile> tile, uint32_t level)
+vsg::ref_ptr<vsg::Node> Tiles3D::Builder::createTripleNestedTile(vsg::ref_ptr<Tiles3D::Tile> tile, uint32_t level, vsg::ref_ptr<vsg::Options> tile_options)
 {
     auto& child = tile->children.values[0];
     auto& child_child = child->children.values[0];
@@ -323,16 +325,29 @@ vsg::ref_ptr<vsg::Node> Tiles3D::Builder::createTripleNestedTile(vsg::ref_ptr<Ti
     vsg::dsphere bound = createBound(tile->boundingVolume);
     bool usePagedLOD = level > preLoadLevel;
 
+    if (!tile_options) tile_options = vsg::clone(options);
+
+    auto parentTransform = tile_options->getRefObject<vsg::dmat4Value>("parentTransform");
+    vsg::ref_ptr<vsg::dmat4Value> transformValue;
+    if (!tile->transform.values.empty())
+    {
+        auto combinedMatrix = createMatrix(tile->transform.values);
+        if (parentTransform)
+            combinedMatrix = parentTransform->value() * combinedMatrix;
+        transformValue = vsg::dmat4Value::create(combinedMatrix);
+        tile_options->setObject("parentTransform", transformValue);
+    }
+
     vsg::ref_ptr<vsg::Node> node;
 
     if (usePagedLOD)
     {
         vsg::ref_ptr<vsg::Node> low_res_subgraph;
 
-        if (child->content) low_res_subgraph = vsg::read_cast<vsg::Node>(child->content->uri, options);
+        if (child->content) low_res_subgraph = vsg::read_cast<vsg::Node>(child->content->uri, tile_options);
 
         auto plod = vsg::PagedLOD::create();
-        plod->options = options;
+        plod->options = vsg::clone(options);
         plod->bound = bound;
 
         plod->children[0] = vsg::PagedLOD::Child{child_screenRatio, {}};
@@ -349,8 +364,8 @@ vsg::ref_ptr<vsg::Node> Tiles3D::Builder::createTripleNestedTile(vsg::ref_ptr<Ti
         vsg::ref_ptr<vsg::Node> low_res_subgraph;
         vsg::ref_ptr<vsg::Node> high_res_subgraph;
 
-        if (child->content) vsg::read_cast<vsg::Node>(child->content->uri, options);
-        if (child_child->content) high_res_subgraph = vsg::read_cast<vsg::Node>(child_child->content->uri, options);
+        if (child->content) vsg::read_cast<vsg::Node>(child->content->uri, tile_options);
+        if (child_child->content) high_res_subgraph = vsg::read_cast<vsg::Node>(child_child->content->uri, tile_options);
 
         auto lod = vsg::LOD::create();
         lod->bound = bound;
@@ -374,21 +389,34 @@ vsg::ref_ptr<vsg::Node> Tiles3D::Builder::createTripleNestedTile(vsg::ref_ptr<Ti
     }
 }
 
-vsg::ref_ptr<vsg::Node> Tiles3D::Builder::createTile(vsg::ref_ptr<Tiles3D::Tile> tile, uint32_t level, const std::string& inherited_refine)
+vsg::ref_ptr<vsg::Node> Tiles3D::Builder::createTile(vsg::ref_ptr<Tiles3D::Tile> tile, uint32_t level, const std::string& inherited_refine, vsg::ref_ptr<vsg::Options> tile_options)
 {
     if (isTripleNestedTile(tile))
     {
-        return createTripleNestedTile(tile, level);
+        return createTripleNestedTile(tile, level, tile_options);
     }
 
     const std::string refine = tile->refine.empty() ? inherited_refine : tile->refine;
     bool usePagedLOD = level > preLoadLevel;
     bool addRefinement = refine == "ADD";
 
+    if (!tile_options) tile_options = vsg::clone(options);
+
+    auto parentTransform = tile_options->getRefObject<vsg::dmat4Value>("parentTransform");
+    vsg::ref_ptr<vsg::dmat4Value> transformValue;
+    if (!tile->transform.values.empty())
+    {
+        auto combinedMatrix = createMatrix(tile->transform.values);
+        if (parentTransform)
+            combinedMatrix = parentTransform->value() * combinedMatrix;
+        transformValue = vsg::dmat4Value::create(combinedMatrix);
+        tile_options->setObject("parentTransform", transformValue);
+    }
+
     vsg::ref_ptr<vsg::Node> local_subgraph;
     if (tile->content && !tile->content->uri.empty())
     {
-        local_subgraph = vsg::read_cast<vsg::Node>(tile->content->uri, options);
+        local_subgraph = vsg::read_cast<vsg::Node>(tile->content->uri, tile_options);
     }
 
     double tile_screenRatio = 0.001;
@@ -402,7 +430,7 @@ vsg::ref_ptr<vsg::Node> Tiles3D::Builder::createTile(vsg::ref_ptr<Tiles3D::Tile>
     }
     else if (usePagedLOD)  // Use PageLOD to load Tile children
     {
-        auto load_options = vsg::clone(options);
+        auto load_options = vsg::clone(tile_options);
         load_options->setObject("tile", tile);
         load_options->setObject("builder", vsg::ref_ptr<Builder>(this));
         load_options->setValue("level", level);
@@ -448,7 +476,7 @@ vsg::ref_ptr<vsg::Node> Tiles3D::Builder::createTile(vsg::ref_ptr<Tiles3D::Tile>
 
                 for(auto& child : tile->children.values)
                 {
-                    if (auto child_node = createTile(child, level+1, refine))
+                    if (auto child_node = createTile(child, level + 1, refine, vsg::clone(tile_options)))
                     {
                         auto lod = vsg::LOD::create();
                         lod->bound = createBound(child->boundingVolume);
@@ -462,7 +490,7 @@ vsg::ref_ptr<vsg::Node> Tiles3D::Builder::createTile(vsg::ref_ptr<Tiles3D::Tile>
             }
             else if (!tile->children.values.empty())  // local_subgraph must be null
             {
-                if (auto highres_subgraph = readTileChildren(tile, level, refine))
+                if (auto highres_subgraph = readTileChildren(tile, level, refine, tile_options))
                 {
                     auto lod = vsg::LOD::create();
                     lod->bound = createBound(tile->boundingVolume);
@@ -483,7 +511,7 @@ vsg::ref_ptr<vsg::Node> Tiles3D::Builder::createTile(vsg::ref_ptr<Tiles3D::Tile>
         {
             child_screenRatio = computeScreenHeightRatio(*tile);
 
-            auto highres_subgraph = readTileChildren(tile, level, refine);
+            auto highres_subgraph = readTileChildren(tile, level, refine, tile_options);
 
             auto lod = vsg::LOD::create();
             lod->bound = createBound(tile->boundingVolume);
@@ -574,7 +602,7 @@ vsg::ref_ptr<vsg::Object> Tiles3D::Builder::createSceneGraph(vsg::ref_ptr<Tiles3
 
     if (tileset->root)
     {
-        if (auto vsg_root = createTile(tileset->root, 0, tileset->root->refine))
+        if (auto vsg_root = createTile(tileset->root, 0, tileset->root->refine, options))
         {
             vsg_tileset->addChild(vsg_root);
         }
