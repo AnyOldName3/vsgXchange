@@ -1838,6 +1838,7 @@ vsg::ref_ptr<vsg::Animation> gltf::Builder::createAnimation(vsg::ref_ptr<gltf::A
     for (auto& channel : gltf_animation->channels.values)
     {
         auto node_id = channel->target.node.value;
+        auto node = model->nodes.values[node_id];
 
         if (channel->target.path == "translation")
             nodeChannels[node_id].translation = channel;
@@ -1853,9 +1854,11 @@ vsg::ref_ptr<vsg::Animation> gltf::Builder::createAnimation(vsg::ref_ptr<gltf::A
 
     for (auto& [node_id, channels] : nodeChannels)
     {
+        auto node = model->nodes.values[node_id];
         if (channels.translation || channels.rotation || channels.scale)
         {
             auto keyframes = vsg::TransformKeyframes::create();
+            keyframes->name = node->name;
 
             if (channels.translation)
             {
@@ -1947,20 +1950,22 @@ vsg::ref_ptr<vsg::Animation> gltf::Builder::createAnimation(vsg::ref_ptr<gltf::A
                 }
             }
 
-            auto transformSampler = vsg::TransformSampler::create();
 
-            auto node = vsg_nodes[node_id];
-            if (auto mt = node.cast<vsg::MatrixTransform>())
+            auto vsg_node = vsg_nodes[node_id];
+
+            auto transformSampler = vsg::TransformSampler::create();
+            transformSampler->name = node->name;
+            transformSampler->keyframes = keyframes;
+            transformSampler->object = vsg_node;
+
+            if (auto mt = vsg_node.cast<vsg::MatrixTransform>())
             {
                 vsg::decompose(mt->matrix, transformSampler->position, transformSampler->rotation, transformSampler->scale);
             }
-            else if (auto joint = node.cast<vsg::Joint>())
+            else if (auto joint = vsg_node.cast<vsg::Joint>())
             {
                 vsg::decompose(joint->matrix, transformSampler->position, transformSampler->rotation, transformSampler->scale);
             }
-
-            transformSampler->keyframes = keyframes;
-            transformSampler->object = vsg_nodes[node_id];
 
             vsg_animation->samplers.push_back(transformSampler);
         }
